@@ -23,11 +23,15 @@
 FROM python:3.12-slim
 
 # Librerías nativas requeridas por WeasyPrint (Pango, Cairo, GDK-PixBuf, etc.)
+# Nota: python:3.12-slim se basa en Debian trixie (13), donde el paquete de
+# GDK-PixBuf pasó de llamarse "libgdk-pixbuf2.0-0" a "libgdk-pixbuf-2.0-0"
+# (con guion extra); en trixie el nombre viejo ya no existe como paquete
+# instalable, por eso se usa el nuevo acá.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libpango-1.0-0 \
     libpangocairo-1.0-0 \
     libcairo2 \
-    libgdk-pixbuf2.0-0 \
+    libgdk-pixbuf-2.0-0 \
     libffi8 \
     fonts-liberation \
     shared-mime-info \
@@ -39,17 +43,18 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
+RUN chmod +x /app/entrypoint.sh
 
 # Directorio de logs/histórico — se crean también en tiempo de ejecución,
 # pero los dejamos listos para que los volúmenes se puedan montar desde
-# fuera (ver docker-compose.yml). Corremos como usuario sin privilegios
-# (buena práctica de seguridad); por eso hay que darle dueño explícito a
-# /app antes de bajar de root.
-RUN mkdir -p /app/logs /app/history \
-    && useradd --create-home --uid 1000 appuser \
+# fuera (ver docker-compose.yml). La app corre como usuario sin privilegios
+# (appuser, buena práctica de seguridad), pero el CONTENEDOR arranca como
+# root a propósito: entrypoint.sh corrige el dueño de logs/history (por si
+# el bind mount del host los creó como root) y recién ahí baja privilegios
+# con `su` antes de ejecutar la app — así no hace falta correr ningún
+# "chown" manual en el host antes de levantar el contenedor.
+RUN useradd --create-home --uid 1000 appuser \
     && chown -R appuser:appuser /app
-
-USER appuser
 
 EXPOSE 5000
 
@@ -57,6 +62,8 @@ EXPOSE 5000
 # usando el mismo FLASK_PORT que use la app dentro del contenedor.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD python -c "import os,urllib.request; urllib.request.urlopen('http://localhost:' + os.environ.get('FLASK_PORT', '5000') + '/login', timeout=5)" || exit 1
+
+ENTRYPOINT ["/app/entrypoint.sh"]
 
 # En producción real, considera reemplazar esto por un WSGI server
 # (gunicorn/waitress) y poner FLASK_DEBUG=false en el .env — ver README.

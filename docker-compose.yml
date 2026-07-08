@@ -8,6 +8,11 @@
 #   2. docker compose up -d --build
 #   3. Abrir http://localhost:${FLASK_PORT:-5000}
 #
+# No hace falta crear ni ajustar el dueño de logs/ e history/ a mano: el
+# contenedor arranca como root, entrypoint.sh les da permisos al usuario sin
+# privilegios que corre la app, y recién ahí baja privilegios (ver Dockerfile
+# y entrypoint.sh).
+#
 # Parar / eliminar:
 #   docker compose down
 # Ver logs en vivo:

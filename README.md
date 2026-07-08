@@ -13,6 +13,7 @@ sonar-report/
 ├── .env                       # Configuración local (no versionar) — copia de .env.example
 ├── .env.example                # Plantilla comentada de todas las variables de entorno soportadas
 ├── Dockerfile                    # Imagen Linux con las librerías nativas de WeasyPrint ya instaladas
+├── entrypoint.sh                   # Arranca como root, corrige permisos de logs/history y baja a appuser
 ├── docker-compose.yml              # Levanta la app en un contenedor (env_file, volúmenes, puerto)
 ├── templates/
 │   ├── dashboard.html        # Plantilla Jinja2 servida en cada petición (dashboard interactivo)
@@ -229,6 +230,13 @@ docker compose up -d --build
 para que persistan aunque se recree el contenedor. Para parar: `docker compose down`. Para ver
 logs en vivo: `docker compose logs -f`.
 
+No hace falta crear ni ajustar permisos de `logs/`/`history/` a mano: el contenedor arranca como
+root únicamente para que `entrypoint.sh` les dé el dueño correcto (la app corre igual como un
+usuario sin privilegios, UID 1000) y recién ahí baja privilegios antes de ejecutar `app.py`. Esto
+resuelve automáticamente el error `PermissionError: [Errno 13] Permission denied:
+'/app/logs/app.log'` que aparecía si esas carpetas del host quedaban como root — si ya te pasó,
+alcanza con `docker compose up -d --build` de nuevo (sin tocar nada a mano).
+
 Importante: sin fijar `FLASK_SECRET_KEY` en el `.env`, cada vez que se recrea el contenedor se
 pierde la clave que firma las cookies de sesión y todo el mundo queda deslogueado. Generá una fija
 con `python -c "import secrets; print(secrets.token_hex(32))"` y pegala en el `.env` antes de usar
@@ -258,6 +266,7 @@ al `docker run`).
 | `401 Unauthorized` / `403 Forbidden` al ver un proyecto | La cuenta con la que se logueó no tiene permiso de lectura sobre ese proyecto | Pide acceso (Browse) sobre el proyecto, o inicia sesión con una cuenta que sí lo tenga |
 | No puedo loguearme, "Usuario/token o contraseña incorrectos" | Credenciales inválidas, o el usuario no existe en SonarQube | Verifica usuario/contraseña, o genera un token nuevo en Mi cuenta → Seguridad |
 | Se desloguea todo el mundo al reiniciar la app | Se borró/regeneró `.flask_secret_key` | No lo borres entre reinicios; si se pierde, todos deben loguearse de nuevo (no es un error, es esperado) |
+| `PermissionError: [Errno 13] Permission denied: '/app/logs/app.log'` (Docker) | `logs/`/`history/` del host quedaron con otro dueño (ej. root) de una versión vieja del Dockerfile | Reconstruí la imagen (`docker compose up -d --build`): `entrypoint.sh` corrige el dueño de esas carpetas automáticamente en cada arranque, ya no hace falta hacerlo a mano |
 | Error de certificado SSL | SonarQube con HTTPS autofirmado | Agregar `verify=False` a `session.get(...)` en `app.py` (solo para desarrollo) |
 | El puerto 5000 ya está en uso | Otro proceso lo ocupa | Cambiar `FLASK_PORT` en `.env` o cerrar el proceso que lo usa |
 | Datos "viejos" tras un cambio en SonarQube | Cache en memoria (`CACHE_TTL_SECONDS`) | Usa el botón "Actualizar" (`?refresh=1`) o baja el TTL |
