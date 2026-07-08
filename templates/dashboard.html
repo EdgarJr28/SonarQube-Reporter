@@ -105,10 +105,10 @@
       </div>
 
       <div class="header-actions no-print">
-        <a id="refreshBtn" class="btn-ghost" href="/project/{{ data.project.key }}?refresh=1">
+        <a id="refreshBtn" class="btn-ghost" href="{{ url_for('project_dashboard', project_key=data.project.key, refresh=1) }}">
           <i class="bi bi-arrow-clockwise"></i> Actualizar
         </a>
-        <a class="btn-ghost" href="/compare?keys={{ data.project.key }}">
+        <a class="btn-ghost" href="{{ url_for('compare_projects', keys=data.project.key) }}">
           <i class="bi bi-bar-chart-line"></i> Comparar
         </a>
         <button class="btn-ghost" onclick="window.print()">
@@ -119,7 +119,7 @@
             id="exportPdfBtn"
             class="btn-solid pdf-export-main"
             type="button"
-            data-pdf-base-url="/project/{{ data.project.key }}/pdf"
+            data-pdf-base-url="{{ url_for('project_pdf', project_key=data.project.key) }}"
             data-filename-base="reporte-sonarqube-{{ data.project.key }}-{{ data.generated_at.date }}"
             data-pdf-detail="full"
           >
@@ -385,6 +385,13 @@
 <script>
   // Objeto unificado devuelto por app.py en esta petición (datos en vivo)
   window.REPORT_DATA = {{ data_json | safe }};
+  // Prefijo bajo el que está montada la app si corre detrás de un reverse
+  // proxy en un sub-path (ej. "/reports" en https://dominio.com/reports/).
+  // request.script_root ya viene resuelto por ProxyFix (ver app.py) a
+  // partir del header X-Forwarded-Prefix que manda nginx. script.js lo usa
+  // para construir URLs (ej. al cambiar de proyecto en el selector) sin
+  // perder el prefijo.
+  window.APP_PREFIX = {{ request.script_root | tojson }};
 </script>
 
 <script src="{{ url_for('static', filename='script.js') }}"></script>

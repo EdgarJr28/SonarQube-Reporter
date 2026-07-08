@@ -234,7 +234,7 @@
       espacio y tiempo de generación, este PDF detalla únicamente los <strong>{{ pdf_issues|length }}
       más severos</strong> (ordenados de mayor a menor severidad). Para el listado completo, filtrable
       y ordenable, consulta el dashboard interactivo en
-      <code>/project/{{ data.project.key }}</code>.
+      <code>{{ url_for('project_dashboard', project_key=data.project.key, _external=True) }}</code>.
     </p>
     {% else %}
     <p class="section-intro">

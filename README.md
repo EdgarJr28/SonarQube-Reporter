@@ -126,6 +126,34 @@ La app ya no usa un token fijo compilado en `app.py`: cada persona se loguea con
 - La sesión dura 8 horas (`app.permanent_session_lifetime`) o hasta que se cierre sesión manualmente.
 - **Limitación conocida**: las credenciales se guardan en memoria del proceso de Flask mientras dura la sesión (no en disco ni en la cookie del navegador). Si corres la app con varios workers (ej. `gunicorn -w 4`), las sesiones no se comparten entre procesos y el login puede fallar de forma intermitente — con `python app.py` (un solo proceso) no hay problema.
 
+## Desplegar bajo un sub-path (ej. `https://tu-dominio.com/reports/`)
+
+Es común querer exponer esta app en el mismo dominio donde ya corre SonarQube (que ocupa la raíz `/`), montando el dashboard de reportes bajo un sub-path como `/reports/`. Para que esto funcione hacen falta **dos partes**, no alcanza con solo configurar el proxy:
+
+1. **nginx tiene que avisarle a Flask bajo qué prefijo la está sirviendo**, mandando el header `X-Forwarded-Prefix`. Sin esto, la app genera (y redirige a) URLs absolutas desde la raíz — `/login`, `/project/x` — perdiendo el `/reports` apenas el navegador navega a cualquier lado (por eso terminabas en `https://tu-dominio.com/login?next=/` en vez de `https://tu-dominio.com/reports/login?next=/reports/`).
+2. **`app.py` tiene que confiar en ese header** — ya está resuelto: `app.wsgi_app` está envuelto con `werkzeug.middleware.proxy_fix.ProxyFix(..., x_prefix=1)`, que lee `X-Forwarded-Prefix` y hace que `url_for()`/`redirect()` generen siempre URLs con el prefijo correcto.
+
+Config de nginx (`/etc/nginx/sites-available/sonar.ludyorder.com` o donde tengas el server block):
+
+```nginx
+location /reports/ {
+    # La barra final en proxy_pass es la que hace que nginx le quite el
+    # prefijo "/reports/" a la URL antes de reenviarla a Flask.
+    proxy_pass http://127.0.0.1:5000/;
+
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    # Este es el header clave para que Flask sepa que está bajo /reports:
+    proxy_set_header X-Forwarded-Prefix /reports;
+}
+```
+
+(`5000` es `FLASK_PORT` del `.env` — ajustalo si usaste otro puerto. Si corrés la app con `docker compose`, `127.0.0.1:5000` sigue funcionando igual porque el `docker-compose.yml` mapea ese puerto al host.)
+
+Reiniciá/recargá nginx después de este cambio (`sudo nginx -t && sudo systemctl reload nginx`), y entrá directamente a `https://tu-dominio.com/reports/` (con la barra final). Si entrás sin la barra final (`/reports`), nginx no lo va a matchear contra `location /reports/` y vas a caer en cualquier otro location que tengas configurado (típicamente el de SonarQube en la raíz) — considerá agregar un redirect de `/reports` a `/reports/` si querés cubrir ese caso.
+
 ## Rutas
 
 | Ruta | Descripción |
@@ -267,6 +295,7 @@ al `docker run`).
 | No puedo loguearme, "Usuario/token o contraseña incorrectos" | Credenciales inválidas, o el usuario no existe en SonarQube | Verifica usuario/contraseña, o genera un token nuevo en Mi cuenta → Seguridad |
 | Se desloguea todo el mundo al reiniciar la app | Se borró/regeneró `.flask_secret_key` | No lo borres entre reinicios; si se pierde, todos deben loguearse de nuevo (no es un error, es esperado) |
 | `PermissionError: [Errno 13] Permission denied: '/app/logs/app.log'` (Docker) | `logs/`/`history/` del host quedaron con otro dueño (ej. root) de una versión vieja del Dockerfile | Reconstruí la imagen (`docker compose up -d --build`): `entrypoint.sh` corrige el dueño de esas carpetas automáticamente en cada arranque, ya no hace falta hacerlo a mano |
+| Al entrar a `/reports/` termina en `/login?next=/` (perdiendo el prefijo) | nginx no está mandando `X-Forwarded-Prefix`, o la app es de antes de agregar `ProxyFix` | Agregá `proxy_set_header X-Forwarded-Prefix /reports;` en el `location` de nginx — ver sección "Desplegar bajo un sub-path" — y actualizá `app.py` a la versión con `ProxyFix` |
 | Error de certificado SSL | SonarQube con HTTPS autofirmado | Agregar `verify=False` a `session.get(...)` en `app.py` (solo para desarrollo) |
 | El puerto 5000 ya está en uso | Otro proceso lo ocupa | Cambiar `FLASK_PORT` en `.env` o cerrar el proceso que lo usa |
 | Datos "viejos" tras un cambio en SonarQube | Cache en memoria (`CACHE_TTL_SECONDS`) | Usa el botón "Actualizar" (`?refresh=1`) o baja el TTL |

@@ -49,6 +49,7 @@ from flask import (
     send_from_directory, session as flask_session,
 )
 from werkzeug.exceptions import HTTPException
+from werkzeug.middleware.proxy_fix import ProxyFix
 
 # Carga variables desde un archivo .env (si existe) hacia os.environ, igual
 # que dotenv en Node. Busca el .env junto a este archivo, sin importar desde
@@ -150,6 +151,18 @@ RATING_LETTERS = {"1.0": "A", "2.0": "B", "3.0": "C", "4.0": "D", "5.0": "E",
                    "1": "A", "2": "B", "3": "C", "4": "D", "5": "E"}
 
 app = Flask(__name__)
+
+# =============================================================================
+# Detrás de un reverse proxy (nginx) bajo un sub-path — ej.
+# https://sonar.ludyorder.com/reports/ — Flask por sí solo no sabe que está
+# montado bajo "/reports": generaría (y redirigiría a) URLs absolutas desde
+# la raíz ("/login", "/project/x"), perdiendo el prefijo apenas el navegador
+# navega. ProxyFix lee los headers X-Forwarded-* que pone nginx (Host,
+# esquema https, y el prefijo) y ajusta el WSGI environ (SCRIPT_NAME, etc.)
+# para que url_for()/redirect() generen siempre URLs con el prefijo correcto.
+# Ver la sección "Desplegar bajo un sub-path" del README para la config de
+# nginx que tiene que acompañar esto (en particular X-Forwarded-Prefix).
+app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
 
 # =============================================================================
 # Login con credenciales de SonarQube
@@ -899,6 +912,15 @@ def select_issues_for_pdf(issues, limit=PDF_MAX_ISSUES):
 # Rutas Flask
 # =============================================================================
 
+def _is_safe_next_path(path):
+    """
+    Valida que un valor de ?next= sea una ruta relativa dentro de esta misma
+    app (nunca una URL absoluta a otro sitio) — evita un open redirect si
+    alguien arma a mano un link tipo /login?next=https://evil.example.
+    """
+    return bool(path) and path.startswith("/") and not path.startswith("//") and "://" not in path
+
+
 @app.before_request
 def require_login():
     """Exige haber iniciado sesión para cualquier ruta salvo login/estáticos."""
@@ -907,7 +929,12 @@ def require_login():
     sid = flask_session.get("sid")
     if not sid or sid not in _USER_SESSIONS:
         flask_session.clear()
-        return redirect(url_for("login", next=request.path))
+        # request.path no incluye el prefijo si la app corre detrás de un
+        # reverse proxy bajo un sub-path (ej. "/reports"); hay que sumarle
+        # request.script_root (resuelto por ProxyFix a partir de
+        # X-Forwarded-Prefix) para que el "next" apunte al lugar correcto.
+        next_path = request.script_root + request.full_path.rstrip("?")
+        return redirect(url_for("login", next=next_path))
     return None
 
 
@@ -944,7 +971,8 @@ def login():
                 flask_session["sid"] = new_sid
                 flask_session["username"] = username_value
                 flask_session.permanent = True
-                next_url = request.args.get("next") or url_for("index")
+                requested_next = request.args.get("next") or request.form.get("next")
+                next_url = requested_next if _is_safe_next_path(requested_next) else url_for("index")
                 return redirect(next_url)
             elif not error:
                 error = "Usuario/token o contraseña incorrectos."

@@ -4,9 +4,10 @@
    en dashboard.html en cada petición, con datos en vivo) para dibujar
    los gráficos con Chart.js y alimentar la tabla de issues (búsqueda,
    orden, filtros, paginación). El selector de proyectos navega de
-   verdad: su onchange está definido inline en dashboard.html y hace
-   window.location.href = '/project/<key>', por lo que aquí no se
-   necesita lógica adicional para él.
+   verdad: su listener de "change" (más abajo, en initPageTransition)
+   navega a window.APP_PREFIX + '/project/<key>' — el prefijo respeta que
+   la app pueda estar montada bajo un sub-path detrás de un reverse proxy
+   (ver ProxyFix en app.py).
    ============================================================= */
 
 (function () {
@@ -310,7 +311,8 @@
       const currentValue = selector.value;
       selector.addEventListener("change", () => {
         if (selector.value === currentValue) return;
-        navigateWithLoader("/project/" + encodeURIComponent(selector.value));
+        const prefix = window.APP_PREFIX || "";
+        navigateWithLoader(prefix + "/project/" + encodeURIComponent(selector.value));
       });
     }
 
