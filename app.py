@@ -105,7 +105,11 @@ def _env_bool(key, default):
 
 
 HOST = _env_str("SONARQUBE_HOST", "http://localhost:9000")          # URL base de la instancia de SonarQube
-PROJECT_KEY = _env_str("DEFAULT_PROJECT_KEY", "WebLudycommerce2")     # Proyecto que se muestra en la ruta "/"
+# A diferencia de _env_str, acá un valor vacío en el .env es válido e
+# intencional (significa "sin proyecto por defecto, mostrar selector en /"),
+# así que NO cae a ningún valor hardcodeado — solo usamos "" si la variable
+# ni siquiera está definida.
+PROJECT_KEY = os.environ.get("DEFAULT_PROJECT_KEY", "").strip()      # Proyecto que se muestra en la ruta "/" (opcional)
 # ---------------------------------------------------------------------------
 # Ya NO se usa un token fijo/global: cada persona inicia sesión en /login con
 # su propio usuario y contraseña de SonarQube (o pega un token personal en el
@@ -997,7 +1001,55 @@ def public_file(filename):
 
 @app.route("/")
 def index():
-    return redirect(url_for("project_dashboard", project_key=PROJECT_KEY))
+    """
+    Si hay un DEFAULT_PROJECT_KEY configurado (.env) Y ese proyecto existe en
+    esta instancia de SonarQube, va directo a su dashboard (comportamiento de
+    siempre). Si no hay default, o el que está configurado no existe en este
+    servidor (ej. una instancia nueva/distinta donde ese proyecto todavía no
+    se analizó), muestra un selector con todos los proyectos disponibles en
+    vez de fallar con un 404/502 al intentar cargar uno que no existe.
+    """
+    sonar_session = _user_session()
+
+    if not PROJECT_KEY:
+        return redirect(url_for("select_project"))
+
+    try:
+        all_projects = get_all_projects(sonar_session)
+    except requests.RequestException:
+        # No se pudo ni listar proyectos (SonarQube caído, etc.) — dejamos
+        # que /project/<key> intente igual y muestre su propio error 502
+        # con el detalle de qué falló, en vez de duplicar el manejo acá.
+        return redirect(url_for("project_dashboard", project_key=PROJECT_KEY))
+
+    if any(p.get("key") == PROJECT_KEY for p in all_projects):
+        return redirect(url_for("project_dashboard", project_key=PROJECT_KEY))
+
+    logger.warning(
+        "DEFAULT_PROJECT_KEY='%s' no existe en esta instancia de SonarQube; mostrando selector de proyectos.",
+        PROJECT_KEY,
+    )
+    return redirect(url_for("select_project"))
+
+
+@app.route("/select-project")
+def select_project():
+    """Selector de proyectos: lista todo lo que ve la cuenta logueada en SonarQube."""
+    sonar_session = _user_session()
+    try:
+        all_projects = get_all_projects(sonar_session)
+    except requests.Timeout as exc:
+        logger.error("Timeout consultando SonarQube (%s) para /select-project: %s", HOST, exc)
+        abort(502, description=f"SonarQube no respondió a tiempo ({HOST}). Verifica que esté corriendo y accesible.")
+    except requests.RequestException as exc:
+        logger.exception("No se pudo listar proyectos para /select-project")
+        abort(502, description=f"No se pudo conectar a SonarQube en {HOST}: {exc}")
+
+    return render_template(
+        "select_project.html",
+        all_projects=all_projects,
+        default_project_key=PROJECT_KEY,
+    )
 
 
 @app.route("/project/<path:project_key>")

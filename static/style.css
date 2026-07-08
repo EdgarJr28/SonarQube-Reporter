@@ -52,6 +52,7 @@
 
 * { box-sizing: border-box; }
 
+html { height: 100%; }
 body {
   font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI",
     Helvetica Neue, Arial, sans-serif;
@@ -62,6 +63,15 @@ body {
   transition: background 0.3s ease, color 0.3s ease;
   animation: fadeIn 0.4s ease;
   letter-spacing: -0.01em;
+  /* "Sticky footer": en páginas con poco contenido (ej. /select-project
+     con pocos proyectos, o /compare sin selección todavía), esto empuja
+     .report-footer hasta el fondo real de la ventana en vez de dejarlo
+     flotando justo debajo del contenido. No afecta a login.html/error.html
+     porque esas páginas fijan su propio display/min-height en el <body>
+     (con mayor especificidad) y no usan .main-content/.report-footer. */
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
 }
 
 @keyframes fadeIn {
@@ -300,6 +310,8 @@ h1, h2, h3, h4 { font-weight: 600; letter-spacing: -0.02em; }
   padding: 32px 28px 64px;
   max-width: 1440px;
   margin: 0 auto;
+  width: 100%;
+  flex: 1 0 auto;
 }
 
 section { margin-bottom: 28px; }
@@ -322,8 +334,25 @@ section { margin-bottom: 28px; }
   gap: 16px;
   animation: slideUp 0.4s ease both;
   transition: transform 0.2s ease, box-shadow 0.2s ease;
+  cursor: grab;
+  /* Sin esto, el tooltip de una tarjeta de la fila de abajo (que se abre
+     hacia arriba, ver .info-tip::after) puede quedar tapado por la
+     tarjeta de la fila de arriba: en un grid, las tarjetas se pintan en
+     orden de aparición y ninguna tenía z-index propio, así que "ganaba"
+     la que estuviera después en el HTML, no la que tuviera el tooltip
+     abierto. Al pasar el mouse/foco por el ícono de info (que está dentro
+     de la tarjeta, así que también dispara :hover acá), la subimos por
+     encima de las demás. */
+  position: relative;
+  z-index: 1;
 }
-.metric-card:hover { transform: translateY(-2px); box-shadow: var(--shadow-card-hover); }
+.metric-card:hover,
+.metric-card:focus-within {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-card-hover);
+  z-index: 5;
+}
+.metric-card:active { cursor: grabbing; }
 
 .metric-icon {
   font-size: 1.3rem;
@@ -521,7 +550,11 @@ section { margin-bottom: 28px; }
   min-height: 300px;
   display: flex;
   flex-direction: column;
+  position: relative;
+  transition: box-shadow 0.2s ease;
+  cursor: grab;
 }
+.chart-card:active { cursor: grabbing; }
 .chart-card h3 {
   font-size: 0.9rem;
   margin: 0 0 14px;
@@ -529,6 +562,73 @@ section { margin-bottom: 28px; }
   font-weight: 600;
 }
 .chart-card canvas { flex: 1; max-height: 280px; }
+
+/* ---------------- Reordenar tarjetas por drag & drop (SortableJS) ---------------- */
+.reorder-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  margin: -8px 0 12px;
+}
+.reorder-hint {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 0.72rem;
+  color: var(--text-muted);
+}
+.reorder-hint i { font-size: 0.8rem; }
+.reorder-reset-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 0.74rem;
+  font-weight: 600;
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.reorder-reset-btn:hover { background: rgba(142, 142, 147, 0.14); color: var(--text-main); }
+
+.card-drag-handle {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  opacity: 0;
+  cursor: grab;
+  transition: opacity 0.15s ease, background 0.15s ease;
+  z-index: 10;
+}
+.metric-card:hover .card-drag-handle,
+.metric-card:focus-within .card-drag-handle,
+.chart-card:hover .card-drag-handle,
+.chart-card:focus-within .card-drag-handle {
+  opacity: 1;
+}
+.card-drag-handle:hover { background: rgba(142, 142, 147, 0.16); color: var(--text-main); }
+.card-drag-handle:active { cursor: grabbing; }
+
+/* Estados que agrega SortableJS mientras se arrastra */
+.sortable-chosen { box-shadow: var(--shadow-card-hover); }
+.sortable-drag { opacity: 0.9; }
+.sortable-ghost {
+  opacity: 0.35;
+  border: 1px dashed var(--blue) !important;
+  background: rgba(0, 113, 227, 0.06) !important;
+}
+.sortable-ghost .card-drag-handle { opacity: 0; }
 
 /* Estado vacío de un gráfico (sin datos que graficar): reemplaza el
    canvas por un mensaje positivo en vez de dejar un gráfico en blanco
@@ -847,6 +947,7 @@ section { margin-bottom: 28px; }
   color: var(--text-muted);
   padding: 22px 28px 18px;
   background: var(--bg-card);
+  flex-shrink: 0;
 }
 .footer-grid {
   max-width: 1440px;
@@ -1047,6 +1148,64 @@ section { margin-bottom: 28px; }
 
 .table-responsive { width: 100%; overflow-x: auto; }
 
+/* ---------------- Selector de proyectos (/select-project) ---------------- */
+.project-picker-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 10px;
+}
+.project-picker-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: rgba(142, 142, 147, 0.08);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-md);
+  padding: 14px 16px;
+  text-decoration: none;
+  color: var(--text-main);
+  transition: background 0.15s ease, border-color 0.15s ease, transform 0.1s ease;
+}
+.project-picker-card:hover {
+  background: rgba(0, 113, 227, 0.08);
+  border-color: rgba(0, 113, 227, 0.3);
+}
+.project-picker-card:active { transform: scale(0.98); }
+.project-picker-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-sm);
+  background: rgba(0, 113, 227, 0.12);
+  color: var(--blue);
+  font-size: 1.05rem;
+  flex-shrink: 0;
+}
+.project-picker-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+.project-picker-name {
+  font-weight: 600;
+  font-size: 0.9rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.project-picker-meta {
+  font-size: 0.76rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.project-picker-arrow { color: var(--text-muted); flex-shrink: 0; }
+
 .compare-table {
   width: 100%;
   border-collapse: collapse;
@@ -1088,6 +1247,12 @@ section { margin-bottom: 28px; }
   .metric-card { padding: 14px; gap: 12px; }
   .metric-value { font-size: 1.25rem; }
 
+  /* En pantallas chicas el ícono de arrastre queda siempre visible (no
+     hay "hover" real en touch), y se esconde el texto de ayuda para no
+     competir por espacio con el botón de restablecer orden. */
+  .card-drag-handle { opacity: 1; }
+  .reorder-hint { display: none; }
+
   .health-score-circle { width: 76px; height: 76px; }
   .health-score-number { font-size: 1.4rem; }
   .health-hero-label { font-size: 1.2rem; }
@@ -1113,51 +1278,172 @@ section { margin-bottom: 28px; }
   margin: 12mm 10mm;
 }
 
-/* ---------------- Chip de usuario logueado (login con credenciales de SonarQube) ---------------- */
-.user-chip {
+/* ---------------- Botón de perfil (usuario logueado con SonarQube) ---------------- */
+.user-avatar {
   display: inline-flex;
   align-items: center;
-  gap: 7px;
-  padding: 6px 8px 6px 12px;
-  border-radius: 999px;
-  background: rgba(142, 142, 147, 0.12);
-  color: var(--text-main);
-  font-size: 0.8rem;
-  font-weight: 600;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: var(--blue);
+  color: #fff;
+  font-size: 0.78rem;
+  font-weight: 700;
+  flex-shrink: 0;
 }
-.user-chip-name {
+.user-avatar-lg { width: 38px; height: 38px; font-size: 0.95rem; }
+
+.user-menu { position: relative; }
+
+.user-menu-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 12px 5px 5px;
+  border-radius: 999px;
+  border: 1px solid var(--hairline);
+  background: var(--bg-card);
+  color: var(--text-main);
+  font-size: 0.82rem;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+.user-menu-trigger:hover,
+.user-menu-trigger[aria-expanded="true"] {
+  background: rgba(0, 113, 227, 0.08);
+  border-color: rgba(0, 113, 227, 0.3);
+}
+.user-menu-name {
   max-width: 140px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.user-chip-logout {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 22px;
-  height: 22px;
-  border-radius: 50%;
+.user-menu-caret {
+  font-size: 0.7rem;
   color: var(--text-muted);
-  transition: background 0.15s ease, color 0.15s ease;
+  transition: transform 0.15s ease;
 }
-.user-chip-logout:hover { background: rgba(255, 59, 48, 0.15); color: var(--red); }
+.user-menu-trigger[aria-expanded="true"] .user-menu-caret { transform: rotate(180deg); }
 
-/* ---------------- Login ---------------- */
+.user-menu-panel {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  width: 240px;
+  background: var(--bg-card);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-card-hover);
+  overflow: hidden;
+  z-index: 1200;
+  animation: toastIn 0.15s ease;
+}
+.user-menu-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px;
+  border-bottom: 1px solid var(--hairline);
+}
+.user-menu-header-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.user-menu-fullname {
+  font-size: 0.88rem;
+  font-weight: 700;
+  color: var(--text-main);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.user-menu-host {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 0.72rem;
+  color: var(--green);
+  font-weight: 500;
+}
+.user-menu-logout {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  color: var(--red);
+  font-size: 0.85rem;
+  font-weight: 600;
+  text-decoration: none;
+  transition: background 0.15s ease;
+}
+.user-menu-logout:hover { background: rgba(255, 59, 48, 0.1); }
+.user-menu-logout i { font-size: 1rem; }
+
+/* ---------------- Login (minimalista, una sola tarjeta centrada) ---------------- */
 .login-body {
   min-height: 100vh;
   display: flex;
   align-items: center;
   justify-content: center;
   padding: 24px;
+  position: relative;
+  overflow: hidden;
+  /* Grilla de puntos muy sutil: le da textura al fondo sin distraer del
+     formulario, y evoca algo "técnico" acorde a una pantalla de login. */
+  background-image: radial-gradient(var(--hairline) 1px, transparent 1px);
+  background-size: 24px 24px;
 }
+/* Dos manchas de color difuminadas flotando detrás de la tarjeta — solo
+   decorativas (pointer-events:none) y por debajo del contenido real. */
+.login-body::before,
+.login-body::after {
+  content: "";
+  position: fixed;
+  width: 480px;
+  height: 480px;
+  border-radius: 50%;
+  filter: blur(90px);
+  opacity: 0.28;
+  pointer-events: none;
+  z-index: 0;
+}
+.login-body::before {
+  top: -160px;
+  left: -140px;
+  background: radial-gradient(circle, var(--blue), transparent 70%);
+  animation: loginBlobFloat 16s ease-in-out infinite;
+}
+.login-body::after {
+  bottom: -160px;
+  right: -140px;
+  width: 420px;
+  height: 420px;
+  background: radial-gradient(circle, var(--green), transparent 70%);
+  animation: loginBlobFloat 20s ease-in-out infinite reverse;
+}
+@keyframes loginBlobFloat {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  50% { transform: translate(36px, 24px) scale(1.1); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .login-body::before, .login-body::after { animation: none; }
+}
+
 .login-wrap {
   width: 100%;
-  max-width: 380px;
+  max-width: 360px;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 18px;
+  gap: 16px;
+  position: relative;
+  z-index: 1;
 }
 .login-card {
   width: 100%;
@@ -1165,12 +1451,40 @@ section { margin-bottom: 28px; }
   border: 1px solid var(--hairline);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-card-hover);
-  padding: 32px 28px;
+  padding: 30px 26px;
 }
-.login-brand { text-align: center; margin-bottom: 22px; }
-.login-brand .logo-dot { margin: 0 auto 14px; }
-.login-brand h1 { font-size: 1.25rem; font-weight: 700; margin: 0 0 6px; color: var(--text-main); }
-.login-subtitle { font-size: 0.82rem; color: var(--text-muted); margin: 0; }
+
+.login-card-head { text-align: center; margin-bottom: 22px; }
+.login-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: var(--radius-md);
+  background: rgba(0, 113, 227, 0.1);
+  color: var(--blue);
+  font-size: 1.15rem;
+  margin-bottom: 12px;
+}
+.login-card-head h1 {
+  font-size: 1.2rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  margin: 0 0 8px;
+  color: var(--text-main);
+}
+.login-subtitle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.76rem;
+  color: var(--text-muted);
+  background: rgba(142, 142, 147, 0.12);
+  padding: 4px 10px;
+  border-radius: 999px;
+  margin: 0;
+}
 
 .login-error {
   display: flex;
@@ -1194,18 +1508,43 @@ section { margin-bottom: 28px; }
   margin: 14px 0 6px;
 }
 .login-label:first-of-type { margin-top: 0; }
+
+.login-input-wrap { position: relative; display: flex; align-items: center; }
+.login-input-icon {
+  position: absolute;
+  left: 14px;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+  pointer-events: none;
+}
 .login-input {
+  width: 100%;
   border: 1px solid var(--hairline);
   background: var(--bg-body);
   color: var(--text-main);
   border-radius: var(--radius-sm);
-  padding: 11px 14px;
-  font-size: 0.92rem;
+  padding: 11px 14px 11px 40px;
+  font-size: 0.9rem;
   font-family: inherit;
   outline: none;
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
+.login-input-has-action { padding-right: 40px; }
 .login-input:focus { border-color: var(--blue); box-shadow: 0 0 0 3px rgba(0, 113, 227, 0.15); }
+
+.login-toggle-password {
+  position: absolute;
+  right: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.login-toggle-password:hover { background: rgba(142, 142, 147, 0.14); color: var(--text-main); }
 
 .login-hint {
   display: flex;
@@ -1213,9 +1552,10 @@ section { margin-bottom: 28px; }
   gap: 6px;
   font-size: 0.74rem;
   color: var(--text-muted);
-  margin: 12px 0 0;
   line-height: 1.4;
+  margin: 12px 0 0;
 }
+.login-hint i { color: var(--blue); margin-top: 1px; }
 
 .login-submit {
   justify-content: center;
@@ -1224,6 +1564,18 @@ section { margin-bottom: 28px; }
   padding: 11px 16px;
   font-size: 0.88rem;
 }
+
+.login-security-note {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  max-width: 340px;
+  text-align: center;
+  font-size: 0.72rem;
+  line-height: 1.4;
+  color: var(--text-muted);
+}
+.login-security-note i { color: var(--green); font-size: 0.85rem; flex-shrink: 0; }
 
 .login-footer-note {
   font-size: 0.76rem;

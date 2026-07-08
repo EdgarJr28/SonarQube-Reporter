@@ -16,6 +16,7 @@
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/ag-grid-community@31.0.3/styles/ag-grid.css">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/ag-grid-community@31.0.3/styles/ag-theme-alpine.css">
 <script src="https://cdn.jsdelivr.net/npm/ag-grid-community@31.0.3/dist/ag-grid-community.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.2/Sortable.min.js"></script>
 <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
@@ -84,12 +85,32 @@
         {% endif %}
 
         {% if current_username %}
-        <div class="user-chip no-print" title="Conectado a SonarQube como {{ current_username }}">
-          <i class="bi bi-person-circle"></i>
-          <span class="user-chip-name">{{ current_username }}</span>
-          <a href="{{ url_for('logout') }}" class="user-chip-logout" title="Cerrar sesión">
-            <i class="bi bi-box-arrow-right"></i>
-          </a>
+        <div class="user-menu no-print">
+          <button
+            id="userMenuBtn"
+            type="button"
+            class="user-menu-trigger"
+            aria-haspopup="true"
+            aria-expanded="false"
+            title="Cuenta de SonarQube"
+          >
+            <span class="user-avatar">{{ current_username[0]|upper }}</span>
+            <span class="user-menu-name">{{ current_username }}</span>
+            <i class="bi bi-chevron-down user-menu-caret"></i>
+          </button>
+          <div id="userMenuPanel" class="user-menu-panel" hidden role="menu">
+            <div class="user-menu-header">
+              <span class="user-avatar user-avatar-lg">{{ current_username[0]|upper }}</span>
+              <div class="user-menu-header-text">
+                <span class="user-menu-fullname">{{ current_username }}</span>
+                <span class="user-menu-host"><i class="bi bi-plug-fill"></i> Conectado a SonarQube</span>
+              </div>
+            </div>
+            <a href="{{ url_for('logout') }}" class="user-menu-logout" role="menuitem">
+              <i class="bi bi-box-arrow-right"></i>
+              <span>Cerrar sesión</span>
+            </a>
+          </div>
         </div>
         {% endif %}
       </div>
@@ -110,6 +131,9 @@
         </a>
         <a class="btn-ghost" href="{{ url_for('compare_projects', keys=data.project.key) }}">
           <i class="bi bi-bar-chart-line"></i> Comparar
+        </a>
+        <a class="btn-ghost" href="{{ url_for('select_project') }}" title="Ver todos los proyectos disponibles">
+          <i class="bi bi-grid"></i> Todos los proyectos
         </a>
         <button class="btn-ghost" onclick="window.print()">
           <i class="bi bi-printer"></i> Imprimir
@@ -177,8 +201,15 @@
   </section>
 
   <!-- ===================== TARJETAS DE RESUMEN ===================== -->
-  <section class="cards-grid">
-    <div class="metric-card {{ 'card-critical' if data.measures.bugs > 0 else 'card-ok' }}">
+  <div class="reorder-toolbar no-print">
+    <span class="reorder-hint"><i class="bi bi-arrows-move"></i> Arrastra una tarjeta para reordenar</span>
+    <button type="button" class="reorder-reset-btn" data-reset-target="cardsGrid" title="Volver al orden original">
+      <i class="bi bi-arrow-counterclockwise"></i> Restablecer orden
+    </button>
+  </div>
+  <section class="cards-grid" id="cardsGrid">
+    <div class="metric-card {{ 'card-critical' if data.measures.bugs > 0 else 'card-ok' }}" data-key="bugs">
+      <span class="card-drag-handle" title="Arrastrar para reordenar"><i class="bi bi-grip-vertical"></i></span>
       <div class="metric-icon"><i class="bi bi-bug-fill"></i></div>
       <div class="metric-body">
         <div class="metric-value counter" data-target="{{ data.measures.bugs }}">0</div>
@@ -188,7 +219,8 @@
       </div>
     </div>
 
-    <div class="metric-card {{ 'card-critical' if data.measures.vulnerabilities > 0 else 'card-ok' }}">
+    <div class="metric-card {{ 'card-critical' if data.measures.vulnerabilities > 0 else 'card-ok' }}" data-key="vulnerabilities">
+      <span class="card-drag-handle" title="Arrastrar para reordenar"><i class="bi bi-grip-vertical"></i></span>
       <div class="metric-icon"><i class="bi bi-shield-exclamation"></i></div>
       <div class="metric-body">
         <div class="metric-value counter" data-target="{{ data.measures.vulnerabilities }}">0</div>
@@ -198,7 +230,8 @@
       </div>
     </div>
 
-    <div class="metric-card {{ 'card-warning' if data.measures.code_smells > 100 else 'card-ok' }}">
+    <div class="metric-card {{ 'card-warning' if data.measures.code_smells > 100 else 'card-ok' }}" data-key="code_smells">
+      <span class="card-drag-handle" title="Arrastrar para reordenar"><i class="bi bi-grip-vertical"></i></span>
       <div class="metric-icon"><i class="bi bi-emoji-frown-fill"></i></div>
       <div class="metric-body">
         <div class="metric-value counter" data-target="{{ data.measures.code_smells }}">0</div>
@@ -208,7 +241,8 @@
       </div>
     </div>
 
-    <div class="metric-card {{ 'card-ok' if data.measures.coverage >= 50 else 'card-warning' }}">
+    <div class="metric-card {{ 'card-ok' if data.measures.coverage >= 50 else 'card-warning' }}" data-key="coverage">
+      <span class="card-drag-handle" title="Arrastrar para reordenar"><i class="bi bi-grip-vertical"></i></span>
       <div class="metric-icon"><i class="bi bi-graph-up-arrow"></i></div>
       <div class="metric-body">
         <div class="metric-value">{{ "%.1f"|format(data.measures.coverage) }}%</div>
@@ -221,7 +255,8 @@
       </div>
     </div>
 
-    <div class="metric-card {{ 'card-warning' if data.measures.duplication > 10 else 'card-ok' }}">
+    <div class="metric-card {{ 'card-warning' if data.measures.duplication > 10 else 'card-ok' }}" data-key="duplication">
+      <span class="card-drag-handle" title="Arrastrar para reordenar"><i class="bi bi-grip-vertical"></i></span>
       <div class="metric-icon"><i class="bi bi-files"></i></div>
       <div class="metric-body">
         <div class="metric-value">{{ "%.1f"|format(data.measures.duplication) }}%</div>
@@ -234,7 +269,8 @@
       </div>
     </div>
 
-    <div class="metric-card card-neutral">
+    <div class="metric-card card-neutral" data-key="ncloc">
+      <span class="card-drag-handle" title="Arrastrar para reordenar"><i class="bi bi-grip-vertical"></i></span>
       <div class="metric-icon"><i class="bi bi-code-slash"></i></div>
       <div class="metric-body">
         <div class="metric-value counter" data-target="{{ data.measures.ncloc }}">0</div>
@@ -244,7 +280,8 @@
       </div>
     </div>
 
-    <div class="metric-card rating-card">
+    <div class="metric-card rating-card" data-key="reliability">
+      <span class="card-drag-handle" title="Arrastrar para reordenar"><i class="bi bi-grip-vertical"></i></span>
       <div class="metric-icon rating-circle {{ data.ratings_css.reliability }}">{{ data.measures.reliability_rating }}</div>
       <div class="metric-body">
         <div class="metric-value">{{ data.measures.reliability_rating }}</div>
@@ -254,7 +291,8 @@
       </div>
     </div>
 
-    <div class="metric-card rating-card">
+    <div class="metric-card rating-card" data-key="security">
+      <span class="card-drag-handle" title="Arrastrar para reordenar"><i class="bi bi-grip-vertical"></i></span>
       <div class="metric-icon rating-circle {{ data.ratings_css.security }}">{{ data.measures.security_rating }}</div>
       <div class="metric-body">
         <div class="metric-value">{{ data.measures.security_rating }}</div>
@@ -264,7 +302,8 @@
       </div>
     </div>
 
-    <div class="metric-card rating-card">
+    <div class="metric-card rating-card" data-key="maintainability">
+      <span class="card-drag-handle" title="Arrastrar para reordenar"><i class="bi bi-grip-vertical"></i></span>
       <div class="metric-icon rating-circle {{ data.ratings_css.maintainability }}">{{ data.measures.maintainability_rating }}</div>
       <div class="metric-body">
         <div class="metric-value">{{ data.measures.maintainability_rating }}</div>
@@ -276,28 +315,39 @@
   </section>
 
   <!-- ===================== GRÁFICOS ===================== -->
-  <section class="charts-grid">
-    <div class="chart-card">
+  <div class="reorder-toolbar no-print">
+    <span class="reorder-hint"><i class="bi bi-arrows-move"></i> Arrastra una tarjeta para reordenar</span>
+    <button type="button" class="reorder-reset-btn" data-reset-target="chartsGrid" title="Volver al orden original">
+      <i class="bi bi-arrow-counterclockwise"></i> Restablecer orden
+    </button>
+  </div>
+  <section class="charts-grid" id="chartsGrid">
+    <div class="chart-card" data-key="bar_comparison">
+      <span class="card-drag-handle" title="Arrastrar para reordenar"><i class="bi bi-grip-vertical"></i></span>
       <h3>Bugs · Code Smells · Vulnerabilidades</h3>
       <canvas id="chartBarComparison"></canvas>
     </div>
 
-    <div class="chart-card">
+    <div class="chart-card" data-key="doughnut_coverage">
+      <span class="card-drag-handle" title="Arrastrar para reordenar"><i class="bi bi-grip-vertical"></i></span>
       <h3>Cobertura vs Duplicación</h3>
       <canvas id="chartDoughnutCoverage"></canvas>
     </div>
 
-    <div class="chart-card">
+    <div class="chart-card" data-key="pie_severity">
+      <span class="card-drag-handle" title="Arrastrar para reordenar"><i class="bi bi-grip-vertical"></i></span>
       <h3>Distribución de severidades</h3>
       <canvas id="chartPieSeverity"></canvas>
     </div>
 
-    <div class="chart-card chart-card-wide">
+    <div class="chart-card chart-card-wide" data-key="top_files">
+      <span class="card-drag-handle" title="Arrastrar para reordenar"><i class="bi bi-grip-vertical"></i></span>
       <h3>Top 10 archivos con más issues</h3>
       <canvas id="chartTopFiles"></canvas>
     </div>
 
-    <div class="chart-card chart-card-wide">
+    <div class="chart-card chart-card-wide" data-key="top_rules">
+      <span class="card-drag-handle" title="Arrastrar para reordenar"><i class="bi bi-grip-vertical"></i></span>
       <h3>Top 10 reglas más incumplidas</h3>
       <canvas id="chartTopRules"></canvas>
     </div>

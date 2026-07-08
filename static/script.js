@@ -35,6 +35,7 @@
   };
 
   document.addEventListener("DOMContentLoaded", () => {
+    initCardReorder();
     initCustomSelects();
     initDarkMode();
     initBackToTop();
@@ -45,9 +46,97 @@
     initPrintHandling();
     initPdfExport();
     initPdfDetailMenu();
+    initUserMenu();
     initLastUpdated();
     initQualityGateFavicon();
   });
+
+  // -----------------------------------------------------------
+  // Reordenar tarjetas por drag & drop (SortableJS, cargado por CDN en
+  // dashboard.html). Aplica a las 9 tarjetas de métricas (#cardsGrid) y
+  // a las 5 de gráficos (#chartsGrid), cada una por separado.
+  //
+  // El orden elegido se guarda en localStorage por "clave" (data-key de
+  // cada tarjeta, no por posición), así que si el día de mañana se agrega
+  // o quita una métrica, un orden guardado viejo no rompe nada: las claves
+  // que ya no existen se ignoran y las tarjetas nuevas simplemente
+  // aparecen al final, en su posición original.
+  // -----------------------------------------------------------
+  function initCardReorder() {
+    if (typeof Sortable === "undefined") return; // por si el CDN no cargó
+
+    const configs = [
+      { id: "cardsGrid", storageKey: "sonarDashboard.order.cardsGrid" },
+      { id: "chartsGrid", storageKey: "sonarDashboard.order.chartsGrid" },
+    ];
+
+    configs.forEach(({ id, storageKey }) => {
+      const grid = document.getElementById(id);
+      if (!grid) return;
+
+      applyStoredOrder(grid, storageKey);
+
+      Sortable.create(grid, {
+        // Sin "handle": toda la tarjeta se puede agarrar y arrastrar, no
+        // solo el ícono ⠿ (que ahora es únicamente una pista visual).
+        animation: 180,
+        ghostClass: "sortable-ghost",
+        chosenClass: "sortable-chosen",
+        dragClass: "sortable-drag",
+        onEnd: () => saveOrder(grid, storageKey),
+      });
+    });
+
+    document.querySelectorAll(".reorder-reset-btn").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const grid = document.getElementById(btn.dataset.resetTarget);
+        if (!grid) return;
+        const config = configs.find((c) => c.id === grid.id);
+        if (!config) return;
+        localStorage.removeItem(config.storageKey);
+        // El orden "original" es el que ya vino del servidor en el HTML,
+        // así que alcanza con borrar lo guardado y refrescar la vista.
+        location.reload();
+      });
+    });
+  }
+
+  function saveOrder(grid, storageKey) {
+    const order = Array.from(grid.children)
+      .map((card) => card.dataset.key)
+      .filter(Boolean);
+    try {
+      localStorage.setItem(storageKey, JSON.stringify(order));
+    } catch (e) {
+      // localStorage lleno o deshabilitado (modo privado, etc.): no es
+      // grave, simplemente no persiste el orden entre visitas.
+    }
+  }
+
+  function applyStoredOrder(grid, storageKey) {
+    let order;
+    try {
+      order = JSON.parse(localStorage.getItem(storageKey) || "null");
+    } catch (e) {
+      order = null;
+    }
+    if (!Array.isArray(order) || !order.length) return;
+
+    const cards = Array.from(grid.children);
+    const byKey = new Map(cards.map((card) => [card.dataset.key, card]));
+
+    // Primero las que están en el orden guardado (y siguen existiendo),
+    // después cualquier tarjeta nueva que no estuviera guardada todavía,
+    // manteniendo su posición relativa original.
+    order.forEach((key) => {
+      const card = byKey.get(key);
+      if (card) {
+        grid.appendChild(card);
+        byKey.delete(key);
+      }
+    });
+    byKey.forEach((card) => grid.appendChild(card));
+  }
 
   // -----------------------------------------------------------
   // Selects personalizados (estilo "material"): reemplaza visualmente
@@ -370,6 +459,37 @@
 
     document.addEventListener("click", (e) => {
       if (!menu.hidden && !menu.contains(e.target) && e.target !== caret) closeMenu();
+    });
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") closeMenu();
+    });
+  }
+
+  // -----------------------------------------------------------
+  // Botón de perfil (header): muestra el usuario logueado en SonarQube y
+  // un botón grande de "Cerrar sesión" en un panel desplegable, en vez del
+  // ícono chiquito de antes — mismo patrón de apertura/cierre que el menú
+  // de detalle del PDF (initPdfDetailMenu).
+  // -----------------------------------------------------------
+  function initUserMenu() {
+    const trigger = document.getElementById("userMenuBtn");
+    const panel = document.getElementById("userMenuPanel");
+    if (!trigger || !panel) return;
+
+    function closeMenu() {
+      panel.hidden = true;
+      trigger.setAttribute("aria-expanded", "false");
+    }
+
+    trigger.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const isOpen = !panel.hidden;
+      panel.hidden = isOpen;
+      trigger.setAttribute("aria-expanded", String(!isOpen));
+    });
+
+    document.addEventListener("click", (e) => {
+      if (!panel.hidden && !panel.contains(e.target) && e.target !== trigger) closeMenu();
     });
     document.addEventListener("keydown", (e) => {
       if (e.key === "Escape") closeMenu();

@@ -18,6 +18,7 @@ sonar-report/
 ├── templates/
 │   ├── dashboard.html        # Plantilla Jinja2 servida en cada petición (dashboard interactivo)
 │   ├── login.html              # Pantalla de login (credenciales de SonarQube)
+│   ├── select_project.html      # Selector de proyectos (/select-project)
 │   ├── compare.html           # Comparación lado a lado de varios proyectos (/compare)
 │   ├── pdf_report.html         # Plantilla exclusiva del PDF formal (WeasyPrint)
 │   └── error.html               # Página de error (SonarQube no disponible, etc.)
@@ -41,7 +42,7 @@ Revisa estos puntos antes de ejecutar `app.py`; son la causa más común de erro
 1. **Existe un archivo `.env`**: copiá `.env.example` a `.env` (`cp .env.example .env` o simplemente duplicá el archivo en Windows) antes de arrancar. Si no existe `.env`, la app arranca igual con los valores por defecto (SonarQube en `http://localhost:9000`, puerto `5000`, etc.).
 2. **`SONARQUBE_HOST` debe estar corriendo y accesible** (por defecto `http://localhost:9000`). Verifica abriendo esa URL en el navegador antes de lanzar la app.
 3. **Ya no hay un token fijo en el código**: cada persona inicia sesión en `/login` con su propia cuenta de SonarQube (usuario+contraseña, o un token personal como "usuario" con contraseña vacía). Esa cuenta debe tener permiso de **lectura** (Browse) sobre el/los proyecto(s) que quiera consultar; sin ese permiso, verá `502` al abrir un proyecto aunque el login haya sido exitoso.
-4. **`DEFAULT_PROJECT_KEY` debe existir** en esa instancia y coincidir exactamente con la clave del proyecto (no el nombre visible). Si no existe, la ruta `/` fallará con un error 502 al redirigir a él.
+4. **`DEFAULT_PROJECT_KEY` es opcional**: si lo dejás vacío, o coincide con un proyecto que no existe en esta instancia (por ejemplo, una instancia nueva o distinta a la que usaste para configurarlo), la ruta `/` no falla — muestra un selector (`/select-project`) con todos los proyectos que tu cuenta puede ver.
 5. **El puerto configurado (`FLASK_PORT`, por defecto `5000`) debe estar libre** en tu máquina. Si algo más lo usa, cámbialo en `.env` o cierra el proceso que lo ocupa.
 6. **Dependencias instaladas** en el mismo intérprete de Python que vas a usar para correr `app.py` (ver sección Instalación). El error típico si falta es `ModuleNotFoundError: No module named 'flask'` o `'requests'` o `'dotenv'`.
 7. **HTTPS con certificado autofirmado**: si tu SonarQube usa HTTPS con un certificado no válido, las peticiones fallarán por verificación SSL. Ver la nota al final sobre `verify=False`.
@@ -75,7 +76,7 @@ Y editar `.env`:
 
 ```dotenv
 SONARQUBE_HOST=http://localhost:9000   # URL de tu instancia SonarQube
-DEFAULT_PROJECT_KEY=WebLudycommerce2    # Proyecto que se muestra en la ruta "/"
+DEFAULT_PROJECT_KEY=WebLudycommerce2    # Proyecto que se muestra en la ruta "/" (opcional: si se deja vacío o no existe en esta instancia, "/" muestra un selector de proyectos en vez de fallar)
 FLASK_PORT=5000                          # Puerto del servidor
 FLASK_DEBUG=true                          # Recarga automática + tracebacks (poner "false" en producción)
 FLASK_SECRET_KEY=                          # Opcional: fija la clave de sesión (si se deja vacío, se autogenera y persiste en .flask_secret_key)
@@ -160,7 +161,8 @@ Reiniciá/recargá nginx después de este cambio (`sudo nginx -t && sudo systemc
 |---|---|
 | `GET /login`, `POST /login` | Pantalla e inicio de sesión con credenciales de SonarQube. |
 | `GET /logout` | Cierra la sesión actual y vuelve a `/login`. |
-| `GET /` | Redirige al proyecto por defecto (`PROJECT_KEY`). |
+| `GET /` | Si `DEFAULT_PROJECT_KEY` está configurado y existe en esta instancia de SonarQube, redirige a su dashboard. Si no hay default, o el configurado no existe (ej. instancia nueva/distinta), redirige a `/select-project`. |
+| `GET /select-project` | Lista todos los proyectos que la cuenta logueada puede ver en SonarQube, para elegir uno sin depender de un default fijo. |
 | `GET /project/<project_key>` | Dashboard del proyecto indicado, con datos en vivo (usa cache de `CACHE_TTL_SECONDS`). Requiere login. |
 | `GET /project/<project_key>?refresh=1` | Fuerza un refresco ignorando la cache (lo dispara el botón "Actualizar"). |
 | `GET /project/<project_key>/pdf` | Genera y descarga el **reporte formal en PDF** (ver sección siguiente). Acepta `?detail=full` (por defecto, con detalle de issues) o `?detail=summary` (solo portada + métricas + gráficos). |
