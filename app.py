@@ -1123,6 +1123,21 @@ def project_pdf(project_key):
     )
 
 
+@app.errorhandler(404)
+def not_found(error):
+    # Manejador dedicado para que un 404 (URL inexistente, favicon.ico, un
+    # bookmark viejo, etc.) muestre la página de error con el estilo de la
+    # app, sin ensuciar logs/app.log. Sin esto, caía en el
+    # @app.errorhandler(Exception) genérico, que al re-lanzar el
+    # HTTPException hacía que Flask le metiera un traceback completo al log
+    # por algo que ni siquiera es un error real de la aplicación. logger.info
+    # queda por debajo del nivel WARNING configurado, así que un 404 normal
+    # no deja nada en el archivo (si algún día lo querés ver, bajá el nivel
+    # del logger a INFO).
+    logger.info("404 Not Found: %s", request.path)
+    return render_template("error.html", message=f"La página \"{request.path}\" no existe."), 404
+
+
 @app.errorhandler(502)
 def bad_gateway(error):
     return render_template("error.html", message=error.description), 502
