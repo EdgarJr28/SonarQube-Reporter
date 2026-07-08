@@ -44,6 +44,16 @@ from logging.handlers import RotatingFileHandler
 
 import requests
 from dotenv import load_dotenv
+
+# El servidor de desarrollo de Werkzeug (FLASK_DEBUG=true) agrega muchos
+# frames extra a la pila de llamadas (reloader + debugger interactivo).
+# Sumado a cómo Python 3.12+ cuenta la recursión internamente, eso puede
+# hacer que el límite por defecto de Python (1000) se alcance DENTRO de
+# Jinja2 (p. ej. al renderizar un {% include %} sobre _user_menu.html)
+# aunque no exista ningún loop real en las plantillas -> RecursionError.
+# Se sube el límite para darle margen de sobra al render normal.
+sys.setrecursionlimit(5000)
+
 from flask import (
     Flask, Response, render_template, redirect, url_for, request, abort,
     send_from_directory, session as flask_session,
@@ -1035,6 +1045,7 @@ def index():
 @app.route("/select-project")
 def select_project():
     """Selector de proyectos: lista todo lo que ve la cuenta logueada en SonarQube."""
+    username = flask_session.get("username")
     sonar_session = _user_session()
     try:
         all_projects = get_all_projects(sonar_session)
@@ -1049,6 +1060,7 @@ def select_project():
         "select_project.html",
         all_projects=all_projects,
         default_project_key=PROJECT_KEY,
+        current_username=username,
     )
 
 
@@ -1109,6 +1121,7 @@ def compare_projects():
             selected_keys=[],
             projects_data=[],
             failed_keys=[],
+            current_username=username,
         )
 
     projects_data = []
@@ -1126,6 +1139,7 @@ def compare_projects():
         selected_keys=selected_keys,
         projects_data=projects_data,
         failed_keys=failed_keys,
+        current_username=username,
     )
 
 

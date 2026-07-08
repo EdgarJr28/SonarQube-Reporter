@@ -37,7 +37,6 @@
   document.addEventListener("DOMContentLoaded", () => {
     initCardReorder();
     initCustomSelects();
-    initDarkMode();
     initBackToTop();
     animateCounters();
     buildCharts();
@@ -46,7 +45,6 @@
     initPrintHandling();
     initPdfExport();
     initPdfDetailMenu();
-    initUserMenu();
     initLastUpdated();
     initQualityGateFavicon();
   });
@@ -466,35 +464,12 @@
   }
 
   // -----------------------------------------------------------
-  // Botón de perfil (header): muestra el usuario logueado en SonarQube y
-  // un botón grande de "Cerrar sesión" en un panel desplegable, en vez del
-  // ícono chiquito de antes — mismo patrón de apertura/cierre que el menú
-  // de detalle del PDF (initPdfDetailMenu).
+  // Nota: el botón de perfil (avatar + "Cerrar sesión") ya NO se inicializa
+  // acá. Se movió a templates/_user_menu.html como un partial de Jinja con
+  // su propio <script> de toggle, para que el dashboard, /select-project y
+  // /compare tengan exactamente el mismo componente sin depender de que
+  // esas páginas carguen este archivo completo.
   // -----------------------------------------------------------
-  function initUserMenu() {
-    const trigger = document.getElementById("userMenuBtn");
-    const panel = document.getElementById("userMenuPanel");
-    if (!trigger || !panel) return;
-
-    function closeMenu() {
-      panel.hidden = true;
-      trigger.setAttribute("aria-expanded", "false");
-    }
-
-    trigger.addEventListener("click", (e) => {
-      e.stopPropagation();
-      const isOpen = !panel.hidden;
-      panel.hidden = isOpen;
-      trigger.setAttribute("aria-expanded", String(!isOpen));
-    });
-
-    document.addEventListener("click", (e) => {
-      if (!panel.hidden && !panel.contains(e.target) && e.target !== trigger) closeMenu();
-    });
-    document.addEventListener("keydown", (e) => {
-      if (e.key === "Escape") closeMenu();
-    });
-  }
 
   // -----------------------------------------------------------
   // Exportar PDF: la generación ocurre en el servidor (matplotlib +
@@ -597,30 +572,14 @@
   // -----------------------------------------------------------
   // Modo oscuro
   // -----------------------------------------------------------
-  function initDarkMode() {
-    const toggle = document.getElementById("darkModeToggle");
-    const root = document.documentElement;
-    const saved = localStorage.getItem("sonar-report-theme");
-
-    if (saved === "dark") {
-      root.setAttribute("data-theme", "dark");
-      toggle.innerHTML = '<i class="bi bi-sun-fill"></i>';
-    }
-
-    toggle.addEventListener("click", () => {
-      const isDark = root.getAttribute("data-theme") === "dark";
-      if (isDark) {
-        root.removeAttribute("data-theme");
-        toggle.innerHTML = '<i class="bi bi-moon-stars-fill"></i>';
-        localStorage.setItem("sonar-report-theme", "light");
-      } else {
-        root.setAttribute("data-theme", "dark");
-        toggle.innerHTML = '<i class="bi bi-sun-fill"></i>';
-        localStorage.setItem("sonar-report-theme", "dark");
-      }
-      buildCharts();
-    });
-  }
+  // El toggle en sí (botón + guardado en localStorage + atributo
+  // data-theme) vive ahora en templates/_theme_toggle.html, compartido por
+  // todas las páginas (antes solo existía acá y solo en dashboard.html).
+  // Acá solo escuchamos el evento que dispara ese partial para
+  // re-renderizar los gráficos de Chart.js con los colores del tema nuevo.
+  window.addEventListener("sonarthemechange", () => {
+    if (typeof buildCharts === "function") buildCharts();
+  });
 
   // -----------------------------------------------------------
   // Botón volver arriba

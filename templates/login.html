@@ -10,11 +10,16 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+{% include "_theme_init.html" %}
 <title>Iniciar sesión · SonarQube Dashboard</title>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css">
 <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body class="login-body">
+
+<div class="floating-controls no-print">
+  {% include "_theme_toggle.html" %}
+</div>
 
 <div class="login-wrap">
   <div class="login-card">

@@ -9,6 +9,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+{% include "_theme_init.html" %}
 <title>Reporte SonarQube · {{ data.project.name }}</title>
 
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css">
@@ -45,9 +46,7 @@
 </div>
 
 <div class="floating-controls no-print">
-  <button id="darkModeToggle" class="fab" title="Cambiar tema">
-    <i class="bi bi-moon-stars-fill"></i>
-  </button>
+  {% include "_theme_toggle.html" %}
   <button id="backToTop" class="fab" title="Volver arriba">
     <i class="bi bi-arrow-up"></i>
   </button>
@@ -84,35 +83,7 @@
           <span class="qg-pill qg-none"><i class="bi bi-dash-circle-fill"></i> {{ data.quality_gate.status }}</span>
         {% endif %}
 
-        {% if current_username %}
-        <div class="user-menu no-print">
-          <button
-            id="userMenuBtn"
-            type="button"
-            class="user-menu-trigger"
-            aria-haspopup="true"
-            aria-expanded="false"
-            title="Cuenta de SonarQube"
-          >
-            <span class="user-avatar">{{ current_username[0]|upper }}</span>
-            <span class="user-menu-name">{{ current_username }}</span>
-            <i class="bi bi-chevron-down user-menu-caret"></i>
-          </button>
-          <div id="userMenuPanel" class="user-menu-panel" hidden role="menu">
-            <div class="user-menu-header">
-              <span class="user-avatar user-avatar-lg">{{ current_username[0]|upper }}</span>
-              <div class="user-menu-header-text">
-                <span class="user-menu-fullname">{{ current_username }}</span>
-                <span class="user-menu-host"><i class="bi bi-plug-fill"></i> Conectado a SonarQube</span>
-              </div>
-            </div>
-            <a href="{{ url_for('logout') }}" class="user-menu-logout" role="menuitem">
-              <i class="bi bi-box-arrow-right"></i>
-              <span>Cerrar sesión</span>
-            </a>
-          </div>
-        </div>
-        {% endif %}
+        {% include "_user_menu.html" %}
       </div>
     </div>
 
