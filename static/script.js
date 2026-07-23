@@ -34,8 +34,13 @@
     },
   };
 
+  // Se pone en true mientras se arrastra una tarjeta (ver initCardReorder)
+  // para que el "click" que llega al soltar no abra el modal de detalle.
+  let dragJustHappened = false;
+
   document.addEventListener("DOMContentLoaded", () => {
     initCardReorder();
+    initMetricDetail();
     initCustomSelects();
     initBackToTop();
     animateCounters();
@@ -81,7 +86,18 @@
         ghostClass: "sortable-ghost",
         chosenClass: "sortable-chosen",
         dragClass: "sortable-drag",
-        onEnd: () => saveOrder(grid, storageKey),
+        // onStart solo dispara cuando el arrastre realmente empieza (Sortable
+        // tiene un umbral de movimiento), así que un click simple no lo
+        // activa. Marcamos la bandera para que el click posterior al soltar
+        // una tarjeta NO abra el modal de detalle.
+        onStart: () => { dragJustHappened = true; },
+        onEnd: () => {
+          saveOrder(grid, storageKey);
+          // El evento "click" llega justo después de onEnd; se limpia en el
+          // siguiente tick para que ese click quede suprimido y los
+          // siguientes (clicks normales) sí funcionen.
+          setTimeout(() => { dragJustHappened = false; }, 0);
+        },
       });
     });
 
@@ -134,6 +150,345 @@
       }
     });
     byKey.forEach((card) => grid.appendChild(card));
+  }
+
+  // -----------------------------------------------------------
+  // Modal de detalle de métrica
+  // -----------------------------------------------------------
+  // Al hacer click en una tarjeta de issues (Bugs, Vulnerabilidades, Code
+  // Smells) se abre un modal con la lista de esos issues. Los datos ya
+  // vienen en window.REPORT_DATA.issues, así que el detalle se arma en el
+  // cliente sin pedirle nada más al servidor.
+  //
+  // Las tarjetas que no representan issues (Cobertura, Duplicación, Líneas
+  // de código y los 3 ratings) no son clickeables: no hay un desglose
+  // issue por issue que mostrar para ellas.
+  // -----------------------------------------------------------
+  const METRIC_DETAIL = {
+    bugs: {
+      title: "Bugs",
+      type: "BUG",
+      description: "Errores que causan comportamiento incorrecto en tiempo de ejecución.",
+    },
+    vulnerabilities: {
+      title: "Vulnerabilidades",
+      type: "VULNERABILITY",
+      description: "Puntos del código que podrían ser explotados por un atacante.",
+    },
+    code_smells: {
+      title: "Code Smells",
+      type: "CODE_SMELL",
+      description: "Código que funciona pero cuesta mantener o entender (deuda técnica).",
+    },
+  };
+
+  const SEVERITY_ORDER = ["BLOCKER", "CRITICAL", "MAJOR", "MINOR", "INFO"];
+  const SEVERITY_LABEL = {
+    BLOCKER: "Bloqueante",
+    CRITICAL: "Crítica",
+    MAJOR: "Mayor",
+    MINOR: "Menor",
+    INFO: "Info",
+  };
+
+  // Cuántas filas se pintan de una vez. Con proyectos grandes (miles de
+  // code smells) renderizar todo de golpe traba el navegador, así que se
+  // muestra de a tandas y se van cargando más al llegar al final del scroll
+  // (scroll infinito).
+  const DETAIL_PAGE_SIZE = 20;
+  // A cuántos píxeles del final se dispara la carga de la próxima tanda.
+  const DETAIL_SCROLL_THRESHOLD = 120;
+  // Pausa antes de pintar la siguiente tanda. Los issues ya están en
+  // memoria, así que sin esta espera el render es instantáneo y el
+  // indicador de carga aparece y desaparece sin que llegue a verse.
+  const DETAIL_LOAD_DELAY = 420;
+
+  function initMetricDetail() {
+    const modal = document.getElementById("metricModal");
+    const grid = document.getElementById("cardsGrid");
+    if (!modal || !grid) return;
+
+    const titleEl = document.getElementById("metricModalTitle");
+    const subtitleEl = document.getElementById("metricModalSubtitle");
+    const severitiesEl = document.getElementById("metricModalSeverities");
+    const filterInput = document.getElementById("metricModalFilter");
+    const countEl = document.getElementById("metricModalCount");
+    const rowsEl = document.getElementById("metricModalRows");
+    const emptyEl = document.getElementById("metricModalEmpty");
+    const loaderEl = document.getElementById("metricModalLoader");
+    const endEl = document.getElementById("metricModalEnd");
+    const bodyEl = modal.querySelector(".metric-modal-body");
+
+    let currentIssues = [];   // issues del tipo abierto (sin más filtros)
+    let visibleIssues = [];   // los que pasan los filtros de texto y severidad
+    let rendered = 0;
+    let activeSeverity = null; // severidad seleccionada con los chips, o null
+    let lastFocused = null;
+    let isLoading = false;    // evita disparar varias cargas a la vez
+    let loadTimer = null;     // timeout de la tanda en curso (cancelable)
+
+    // Marca visualmente como clickeables solo las tarjetas que tienen detalle.
+    Object.keys(METRIC_DETAIL).forEach((key) => {
+      const card = grid.querySelector('[data-key="' + key + '"]');
+      if (!card) return;
+      card.classList.add("metric-card-clickable");
+      card.setAttribute("tabindex", "0");
+      card.setAttribute("role", "button");
+      card.setAttribute("aria-haspopup", "dialog");
+      card.setAttribute("title", "Ver detalle de " + METRIC_DETAIL[key].title);
+    });
+
+    function escapeHtml(value) {
+      return String(value == null ? "" : value)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
+    }
+
+    // Los chips de severidad son botones: al hacer click filtran la tabla
+    // por esa severidad, y al volver a hacer click sobre el que ya está
+    // activo se quita el filtro (toggle).
+    function renderSeverities(issues) {
+      const counts = {};
+      issues.forEach((i) => {
+        counts[i.severity] = (counts[i.severity] || 0) + 1;
+      });
+
+      const present = SEVERITY_ORDER.filter((s) => counts[s]);
+      const total = issues.length;
+
+      const chips = [
+        '<button type="button" class="metric-modal-sev sev-all' +
+          (activeSeverity === null ? " is-active" : "") +
+          '" data-severity="">' +
+          "<strong>" + total + "</strong> Todas" +
+          "</button>",
+      ].concat(
+        present.map((s) => {
+          return (
+            '<button type="button" class="metric-modal-sev sev-' + s.toLowerCase() +
+            (activeSeverity === s ? " is-active" : "") +
+            '" data-severity="' + s + '">' +
+            "<strong>" + counts[s] + "</strong> " + (SEVERITY_LABEL[s] || s) +
+            "</button>"
+          );
+        })
+      );
+
+      severitiesEl.innerHTML = chips.join("");
+    }
+
+    function renderChunk() {
+      const slice = visibleIssues.slice(rendered, rendered + DETAIL_PAGE_SIZE);
+      const html = slice
+        .map((i) => {
+          const sev = String(i.severity || "").toLowerCase();
+          return (
+            "<tr>" +
+            '<td><span class="metric-modal-sev sev-' + sev + '">' +
+              (SEVERITY_LABEL[i.severity] || i.severity || "-") + "</span></td>" +
+            // Sin title= nativo: el tooltip lo maneja static/tooltip.js, que
+            // solo lo muestra si el nombre realmente no entra en la celda.
+            '<td class="metric-modal-file">' + escapeHtml(i.file) + "</td>" +
+            "<td>" + escapeHtml(i.line) + "</td>" +
+            '<td class="metric-modal-rule">' + escapeHtml(i.rule) + "</td>" +
+            '<td class="metric-modal-msg">' + escapeHtml(i.message) + "</td>" +
+            "</tr>"
+          );
+        })
+        .join("");
+
+      rowsEl.insertAdjacentHTML("beforeend", html);
+      rendered += slice.length;
+
+      // Las filas recién agregadas entran con un fade-in escalonado (ver
+      // .metric-modal-row-new en style.css). Se marca solo la tanda nueva
+      // para no re-animar lo que ya estaba en pantalla.
+      const newRows = Array.from(rowsEl.children).slice(-slice.length);
+      newRows.forEach((row, idx) => {
+        row.classList.add("metric-modal-row-new");
+        row.style.animationDelay = idx * 25 + "ms";
+        row.addEventListener(
+          "animationend",
+          () => {
+            row.classList.remove("metric-modal-row-new");
+            row.style.animationDelay = "";
+          },
+          { once: true }
+        );
+      });
+
+      endEl.hidden = rendered < visibleIssues.length || visibleIssues.length === 0;
+      updateCount();
+    }
+
+    // Carga la próxima tanda mostrando el indicador el tiempo suficiente
+    // como para que se perciba. Sin esta pausa el render es instantáneo
+    // (los datos ya están en memoria) y el usuario no llega a ver nada.
+    function loadMore() {
+      if (isLoading || rendered >= visibleIssues.length) return;
+      isLoading = true;
+      loaderEl.hidden = false;
+
+      loadTimer = setTimeout(() => {
+        loadTimer = null;
+        renderChunk();
+        loaderEl.hidden = true;
+        isLoading = false;
+      }, DETAIL_LOAD_DELAY);
+    }
+
+    // Cancela una carga pendiente. Sin esto, al cambiar de filtro mientras
+    // hay una tanda en vuelo, ese setTimeout igual se ejecutaría y volvería
+    // a pintar la primera tanda del filtro nuevo, duplicando filas.
+    function cancelPendingLoad() {
+      if (loadTimer !== null) {
+        clearTimeout(loadTimer);
+        loadTimer = null;
+      }
+      isLoading = false;
+      loaderEl.hidden = true;
+    }
+
+    function updateCount() {
+      const shown = Math.min(rendered, visibleIssues.length);
+      if (visibleIssues.length === currentIssues.length) {
+        countEl.textContent = "Mostrando " + shown + " de " + currentIssues.length;
+      } else {
+        countEl.textContent =
+          "Mostrando " + shown + " de " + visibleIssues.length +
+          " (filtrados de " + currentIssues.length + ")";
+      }
+    }
+
+    function applyFilter() {
+      const term = (filterInput.value || "").trim().toLowerCase();
+
+      visibleIssues = currentIssues.filter((i) => {
+        if (activeSeverity && i.severity !== activeSeverity) return false;
+        if (!term) return true;
+        return (
+          String(i.file || "").toLowerCase().includes(term) ||
+          String(i.rule || "").toLowerCase().includes(term) ||
+          String(i.message || "").toLowerCase().includes(term)
+        );
+      });
+
+      rowsEl.innerHTML = "";
+      rendered = 0;
+      // Si había una carga en curso se descarta: sus filas ya no
+      // corresponden al filtro nuevo.
+      cancelPendingLoad();
+      endEl.hidden = true;
+      emptyEl.hidden = visibleIssues.length > 0;
+      if (bodyEl) bodyEl.scrollTop = 0;
+      renderChunk();
+      // Si la primera tanda no alcanza a llenar el alto visible no habría
+      // scroll y el infinite scroll nunca dispararía: se rellena hasta que
+      // haya desborde (o hasta que no queden más issues).
+      fillUntilScrollable();
+    }
+
+    function fillUntilScrollable() {
+      // Si el modal todavía no es visible, clientHeight es 0 y la condición
+      // de abajo daría siempre verdadera, rellenando de más. En ese caso no
+      // se hace nada: openModal() vuelve a llamar a esto ya con el modal
+      // visible, cuando las medidas son reales.
+      if (!bodyEl || !bodyEl.clientHeight) return;
+      let guard = 0;
+      while (
+        rendered < visibleIssues.length &&
+        bodyEl.scrollHeight <= bodyEl.clientHeight &&
+        guard < 50
+      ) {
+        renderChunk();
+        guard += 1;
+      }
+    }
+
+    function openModal(key) {
+      const meta = METRIC_DETAIL[key];
+      if (!meta) return;
+
+      const allIssues = (window.REPORT_DATA && window.REPORT_DATA.issues) || [];
+      currentIssues = allIssues.filter((i) => i.type === meta.type);
+      // Más severos primero: es lo que uno quiere atacar antes.
+      currentIssues.sort(
+        (a, b) => SEVERITY_ORDER.indexOf(a.severity) - SEVERITY_ORDER.indexOf(b.severity)
+      );
+
+      titleEl.textContent = meta.title;
+      subtitleEl.textContent = meta.description;
+      // Cada vez que se abre una métrica se arranca sin filtros previos.
+      activeSeverity = null;
+      filterInput.value = "";
+      renderSeverities(currentIssues);
+
+      // El modal se muestra ANTES de pintar las filas: mientras está oculto
+      // no tiene alto medible, y el scroll infinito necesita medidas reales
+      // para saber si ya hay desborde.
+      lastFocused = document.activeElement;
+      modal.hidden = false;
+      document.body.style.overflow = "hidden"; // evita scroll del fondo
+
+      applyFilter();
+      filterInput.focus();
+    }
+
+    function closeModal() {
+      cancelPendingLoad();
+      modal.hidden = true;
+      document.body.style.overflow = "";
+      if (lastFocused && typeof lastFocused.focus === "function") lastFocused.focus();
+    }
+
+    grid.addEventListener("click", (e) => {
+      if (dragJustHappened) return; // se soltó una tarjeta, no fue un click
+      const card = e.target.closest(".metric-card-clickable");
+      if (!card || !grid.contains(card)) return;
+      // El ícono de tooltip (ⓘ) tiene su propio comportamiento al hacer
+      // hover/focus; no debería abrir el modal.
+      if (e.target.closest(".info-tip")) return;
+      openModal(card.dataset.key);
+    });
+
+    grid.addEventListener("keydown", (e) => {
+      if (e.key !== "Enter" && e.key !== " ") return;
+      const card = e.target.closest(".metric-card-clickable");
+      if (!card) return;
+      e.preventDefault();
+      openModal(card.dataset.key);
+    });
+
+    modal.querySelectorAll("[data-close-modal]").forEach((el) => {
+      el.addEventListener("click", closeModal);
+    });
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape" && !modal.hidden) closeModal();
+    });
+    filterInput.addEventListener("input", applyFilter);
+
+    // Filtrar por severidad al hacer click en un chip (toggle).
+    severitiesEl.addEventListener("click", (e) => {
+      const chip = e.target.closest("[data-severity]");
+      if (!chip) return;
+      const value = chip.getAttribute("data-severity") || null;
+      // Click sobre el chip ya activo => se quita el filtro.
+      activeSeverity = activeSeverity === value ? null : value;
+      renderSeverities(currentIssues);
+      applyFilter();
+    });
+
+    // Scroll infinito: al acercarse al final se carga la próxima tanda.
+    if (bodyEl) {
+      bodyEl.addEventListener("scroll", () => {
+        if (isLoading || rendered >= visibleIssues.length) return;
+        const distanceToBottom =
+          bodyEl.scrollHeight - bodyEl.scrollTop - bodyEl.clientHeight;
+        if (distanceToBottom <= DETAIL_SCROLL_THRESHOLD) loadMore();
+      });
+    }
   }
 
   // -----------------------------------------------------------
@@ -663,17 +1018,25 @@
             {
               data: history.map((h) => h.bugs),
               borderColor: COLORS.bug,
-              backgroundColor: "rgba(255,59,48,0.1)",
-              fill: true,
-              tension: 0.35,
-              pointRadius: 0,
+              // Línea limpia, sin área rellena.
+              fill: false,
+              tension: 0.3,
               borderWidth: 2,
+              // Puntos discretos que se agrandan al pasar el mouse, para
+              // poder inspeccionar cada día.
+              pointRadius: 2,
+              pointHoverRadius: 4,
+              pointBackgroundColor: COLORS.bug,
+              pointBorderWidth: 0,
             },
           ],
         },
         options: {
           responsive: true,
           maintainAspectRatio: false,
+          // El sparkline es angosto; sin un poco de aire arriba/abajo la
+          // línea toca los bordes del contenedor.
+          layout: { padding: { top: 6, bottom: 4, left: 2, right: 2 } },
           plugins: {
             legend: { display: false },
             tooltip: {
@@ -915,12 +1278,25 @@
     INFO: "bi-info-circle-fill",
   };
 
-  function badgeRenderer(cssPrefix, iconMap) {
+  // Etiquetas legibles para las tablas: en la API de SonarQube los valores
+  // vienen como constantes (CODE_SMELL, BLOCKER...), que no son lo que uno
+  // quiere leer en un reporte. El valor crudo se conserva para filtrar y
+  // ordenar; esto es solo lo que se muestra.
+  const TYPE_LABELS = {
+    BUG: "Bug",
+    VULNERABILITY: "Vulnerabilidad",
+    CODE_SMELL: "Code Smell",
+  };
+
+  function badgeRenderer(cssPrefix, iconMap, labelMap) {
     return (params) => {
       const value = params.value == null ? "" : String(params.value);
-      const safe = escapeHtml(value);
-      const icon = iconMap && iconMap[value] ? `<i class="bi ${iconMap[value]}"></i> ` : "";
-      return `<span class="${cssPrefix}-${safe}">${icon}${safe}</span>`;
+      if (!value) return "";
+      const label = escapeHtml((labelMap && labelMap[value]) || value);
+      const icon = iconMap && iconMap[value]
+        ? `<i class="bi ${iconMap[value]}" aria-hidden="true"></i>`
+        : "";
+      return `<span class="${cssPrefix}-${escapeHtml(value)}">${icon}<span>${label}</span></span>`;
     };
   }
 
@@ -959,25 +1335,30 @@
       window.history.replaceState(null, "", newUrl);
     }
 
+    // Nota sobre tooltips: ya no se usa tooltipField de AG Grid. El texto
+    // completo de las celdas recortadas lo muestra static/tooltip.js, que
+    // cubre .ag-cell por delegación — así el tooltip se ve igual acá, en el
+    // modal de detalle y en el resto de la app, en vez de tener el estilo
+    // propio de AG Grid en la tabla y otro distinto en todos lados.
     const columnDefs = [
       {
         headerName: "Tipo",
         field: "type",
-        minWidth: 150,
-        cellRenderer: badgeRenderer("badge-type badge", TYPE_ICONS),
+        width: 165,
+        cellRenderer: badgeRenderer("badge-type badge", TYPE_ICONS, TYPE_LABELS),
       },
       {
         headerName: "Severidad",
         field: "severity",
-        minWidth: 150,
-        cellRenderer: badgeRenderer("badge-severity badge", SEVERITY_ICONS),
+        width: 145,
+        cellRenderer: badgeRenderer("badge-severity badge", SEVERITY_ICONS, SEVERITY_LABEL),
       },
-      { headerName: "Archivo", field: "file", flex: 2, minWidth: 220, tooltipField: "file" },
-      { headerName: "Línea", field: "line", width: 90, type: "rightAligned" },
+      { headerName: "Archivo", field: "file", flex: 2, minWidth: 200 },
+      { headerName: "Línea", field: "line", width: 85, type: "rightAligned" },
       {
         headerName: "Regla",
         field: "rule",
-        minWidth: 170,
+        minWidth: 160,
         cellRenderer: (params) => `<code>${escapeHtml(params.value)}</code>`,
       },
       {
@@ -985,13 +1366,14 @@
         field: "message",
         flex: 3,
         minWidth: 280,
-        tooltipField: "message",
-        wrapText: true,
-        autoHeight: true,
+        // Sin wrapText/autoHeight: hacían que cada fila tuviera un alto
+        // distinto según el largo del mensaje, y la tabla quedaba despareja.
+        // Ahora el mensaje se recorta a una línea y el texto completo sale
+        // en el tooltip al pasar el mouse.
       },
-      { headerName: "Estado", field: "status", width: 120 },
-      { headerName: "Autor", field: "author", minWidth: 150 },
-      { headerName: "Fecha", field: "date", width: 160 },
+      { headerName: "Estado", field: "status", width: 115 },
+      { headerName: "Autor", field: "author", minWidth: 140 },
+      { headerName: "Fecha", field: "date", width: 150 },
     ];
 
     function applyFilters() {

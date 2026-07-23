@@ -336,12 +336,8 @@ def get_quality_gate(session, project_key):
     return resp.json().get("projectStatus", {})
 
 
-def get_all_projects(session):
-    """
-    Consulta /api/projects/search y devuelve la lista completa de proyectos
-    de la instancia (paginando), para alimentar el selector del dashboard.
-    """
-    url = f"{HOST}/api/projects/search"
+def _fetch_projects_paginated(session, url, extra_params=None):
+    """Pagina un endpoint de SonarQube que devuelve {"components": [...]}."""
     page = 1
     ps = 500
     projects = []
@@ -349,6 +345,8 @@ def get_all_projects(session):
 
     while True:
         params = {"p": page, "ps": ps}
+        if extra_params:
+            params.update(extra_params)
         resp = session.get(url, params=params, timeout=REQUEST_TIMEOUT)
         resp.raise_for_status()
         data = resp.json()
@@ -363,6 +361,38 @@ def get_all_projects(session):
         if not components or len(projects) >= total:
             break
         page += 1
+
+    return projects
+
+
+def get_all_projects(session):
+    """
+    Devuelve la lista de proyectos que la cuenta logueada puede ver, para
+    alimentar el selector del dashboard y /select-project.
+
+    Usa /api/components/search_projects — el mismo endpoint que consume la
+    página "Projects" de SonarQube — porque solo devuelve lo que el usuario
+    tiene permiso de "Browse" y funciona para cualquier cuenta autenticada.
+
+    NO se usa /api/projects/search: ese endpoint exige permiso "Administer
+    System", así que devolvía 403 a cualquier usuario normal. Se deja como
+    fallback por si una instancia vieja no expone search_projects, pero si
+    también falla se propaga el error original (más informativo).
+    """
+    try:
+        projects = _fetch_projects_paginated(
+            session, f"{HOST}/api/components/search_projects"
+        )
+    except requests.HTTPError as exc:
+        status = exc.response.status_code if exc.response is not None else None
+        if status not in (400, 404):
+            raise
+        logger.warning(
+            "search_projects no disponible (%s), probando /api/projects/search", status
+        )
+        projects = _fetch_projects_paginated(
+            session, f"{HOST}/api/projects/search"
+        )
 
     projects.sort(key=lambda p: (p["name"] or "").lower())
     return projects
@@ -961,9 +991,14 @@ def login():
 
     error = None
     username_value = ""
+    login_mode = "credentials"
     if request.method == "POST":
         username_value = request.form.get("username", "").strip()
         password = request.form.get("password", "")
+        # El switch usuario/contraseña vs token en login.html manda este campo
+        # oculto para que, si hay error y se vuelve a mostrar el form, quede
+        # seleccionada la misma pestaña que el usuario había elegido.
+        login_mode = request.form.get("login_mode", "").strip() or ("token" if not password else "credentials")
 
         if not username_value:
             error = "Ingresá tu usuario (o token) de SonarQube."
@@ -991,7 +1026,9 @@ def login():
             elif not error:
                 error = "Usuario/token o contraseña incorrectos."
 
-    return render_template("login.html", error=error, username_value=username_value, host=HOST)
+    return render_template(
+        "login.html", error=error, username_value=username_value, host=HOST, login_mode=login_mode
+    )
 
 
 @app.route("/logout")
@@ -1052,6 +1089,23 @@ def select_project():
     except requests.Timeout as exc:
         logger.error("Timeout consultando SonarQube (%s) para /select-project: %s", HOST, exc)
         abort(502, description=f"SonarQube no respondió a tiempo ({HOST}). Verifica que esté corriendo y accesible.")
+    except requests.HTTPError as exc:
+        status = getattr(exc.response, "status_code", None)
+        if status == 401:
+            logger.warning("Credenciales de SonarQube rechazadas al listar proyectos, cerrando sesión")
+            return redirect(url_for("logout"))
+        if status == 403:
+            logger.warning("SonarQube devolvió 403 al listar proyectos para '%s'", username)
+            abort(
+                502,
+                description=(
+                    "Tu cuenta de SonarQube no tiene permiso para listar proyectos. "
+                    "Pedile a un administrador que te dé permiso de 'Browse' sobre los "
+                    "proyectos que necesitás ver."
+                ),
+            )
+        logger.exception("Error HTTP listando proyectos para /select-project")
+        abort(502, description=f"Error consultando SonarQube en {HOST}: {exc}")
     except requests.RequestException as exc:
         logger.exception("No se pudo listar proyectos para /select-project")
         abort(502, description=f"No se pudo conectar a SonarQube en {HOST}: {exc}")

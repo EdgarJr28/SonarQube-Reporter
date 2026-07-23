@@ -33,32 +33,46 @@
     <div class="login-error"><i class="bi bi-exclamation-triangle-fill"></i> {{ error }}</div>
     {% endif %}
 
-    <form method="post" action="{{ url_for('login', next=request.args.get('next')) }}" class="login-form">
-      <label class="login-label" for="username">Usuario o token</label>
+    <div class="login-mode-switch" role="tablist" aria-label="Método de acceso" id="loginModeSwitch">
+      <button type="button" class="login-mode-btn" data-mode="credentials" role="tab" aria-selected="true">
+        <i class="bi bi-person-badge-fill"></i> Usuario y contraseña
+      </button>
+      <button type="button" class="login-mode-btn" data-mode="token" role="tab" aria-selected="false">
+        <i class="bi bi-key-fill"></i> Token de acceso
+      </button>
+      <span class="login-mode-thumb" aria-hidden="true"></span>
+    </div>
+
+    <form method="post" action="{{ url_for('login', next=request.args.get('next')) }}" class="login-form" id="loginForm">
+      <input type="hidden" name="login_mode" id="loginModeInput" value="{{ login_mode or 'credentials' }}" />
+
+      <label class="login-label" for="username" id="usernameLabel">Usuario</label>
       <div class="login-input-wrap">
-        <i class="bi bi-person-fill login-input-icon"></i>
+        <i class="bi bi-person-fill login-input-icon" id="usernameIcon"></i>
         <input
           id="username" name="username" type="text" class="login-input"
-          placeholder="usuario o squ_xxxxxxxx" value="{{ username_value }}"
+          placeholder="usuario de SonarQube" value="{{ username_value }}"
           autocomplete="username" autofocus required
         />
       </div>
 
-      <label class="login-label" for="password">Contraseña</label>
-      <div class="login-input-wrap">
-        <i class="bi bi-lock-fill login-input-icon"></i>
-        <input
-          id="password" name="password" type="password" class="login-input login-input-has-action"
-          placeholder="Opcional si usas un token" autocomplete="current-password"
-        />
-        <button type="button" id="togglePassword" class="login-toggle-password" tabindex="-1" aria-label="Mostrar contraseña">
-          <i class="bi bi-eye"></i>
-        </button>
+      <div id="passwordGroup">
+        <label class="login-label" for="password">Contraseña</label>
+        <div class="login-input-wrap">
+          <i class="bi bi-lock-fill login-input-icon"></i>
+          <input
+            id="password" name="password" type="password" class="login-input login-input-has-action"
+            placeholder="Tu contraseña" autocomplete="current-password"
+          />
+          <button type="button" id="togglePassword" class="login-toggle-password" tabindex="-1" aria-label="Mostrar contraseña">
+            <i class="bi bi-eye"></i>
+          </button>
+        </div>
       </div>
 
-      <p class="login-hint">
-        <i class="bi bi-key-fill"></i>
-        ¿Tienes un token? Pégalo como usuario y deja la contraseña vacía.
+      <p class="login-hint" id="loginHint">
+        <i class="bi bi-info-circle-fill"></i>
+        <span id="loginHintText">Usa el mismo usuario y contraseña con el que entras a SonarQube.</span>
       </p>
 
       <button type="submit" class="btn-solid login-submit">
@@ -86,6 +100,67 @@
       toggle.querySelector("i").className = showing ? "bi bi-eye" : "bi bi-eye-slash";
       toggle.setAttribute("aria-label", showing ? "Mostrar contraseña" : "Ocultar contraseña");
     });
+  })();
+</script>
+
+<script>
+  // Switch "Usuario y contraseña" / "Token de acceso": es puramente visual
+  // (el backend siempre recibe el mismo campo "username" — un token de
+  // SonarQube funciona ahí igual que un usuario, con la contraseña vacía).
+  // Acá solo cambiamos labels/placeholder y mostramos u ocultamos el campo
+  // de contraseña para que quede claro qué hay que llenar en cada modo.
+  (function () {
+    var switchEl = document.getElementById("loginModeSwitch");
+    var buttons = switchEl ? switchEl.querySelectorAll(".login-mode-btn") : [];
+    var modeInput = document.getElementById("loginModeInput");
+    var usernameInput = document.getElementById("username");
+    var usernameLabel = document.getElementById("usernameLabel");
+    var usernameIcon = document.getElementById("usernameIcon");
+    var passwordGroup = document.getElementById("passwordGroup");
+    var password = document.getElementById("password");
+    var hintText = document.getElementById("loginHintText");
+    if (!switchEl || !modeInput) return;
+
+    var COPY = {
+      credentials: {
+        label: "Usuario",
+        placeholder: "usuario de SonarQube",
+        icon: "bi bi-person-fill login-input-icon",
+        hint: "Usa el mismo usuario y contraseña con el que entras a SonarQube.",
+      },
+      token: {
+        label: "Token de acceso",
+        placeholder: "squ_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        icon: "bi bi-key-fill login-input-icon",
+        hint: "Genéralo en SonarQube: tu avatar → My Account → Security. No hace falta contraseña.",
+      },
+    };
+
+    function setMode(mode) {
+      var copy = COPY[mode] || COPY.credentials;
+      modeInput.value = mode;
+      switchEl.setAttribute("data-active", mode);
+      buttons.forEach(function (btn) {
+        var isActive = btn.getAttribute("data-mode") === mode;
+        btn.classList.toggle("is-active", isActive);
+        btn.setAttribute("aria-selected", String(isActive));
+      });
+      if (usernameLabel) usernameLabel.textContent = copy.label;
+      if (usernameInput) usernameInput.placeholder = copy.placeholder;
+      if (usernameIcon) usernameIcon.className = copy.icon;
+      if (hintText) hintText.textContent = copy.hint;
+      if (passwordGroup) passwordGroup.hidden = mode === "token";
+      if (password && mode === "token") password.value = "";
+    }
+
+    buttons.forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        setMode(btn.getAttribute("data-mode"));
+        if (btn.getAttribute("data-mode") === "token" && usernameInput) usernameInput.focus();
+      });
+    });
+
+    setMode(modeInput.value === "token" ? "token" : "credentials");
   })();
 </script>
 
